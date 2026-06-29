@@ -2,24 +2,21 @@ import streamlit as st
 from groq import Groq
 
 def get_client():
+    """Groq client lazy ga create cheyyali"""
     if "GROQ_API_KEY" not in st.secrets:
-        st.error("GROQ_API_KEY secret ledu!")
+        st.error("GROQ_API_KEY secret ledu! Streamlit Cloud → Settings → Secrets lo add chey")
         st.stop()
     
-    # str() + strip() + repr() - mottam clean chestadi
     api_key = str(st.secrets["GROQ_API_KEY"]).strip().replace('\n','').replace('\r','')
     
-    # Debug: screen meda kanipistadi
-    st.write("DEBUG Key length:", len(api_key))
-    st.write("DEBUG Key start:", api_key[:10])
-    
     if len(api_key)!= 56:
-        st.error(f"Key length tappu! 56 undali, kani {len(api_key)} undi. Secrets lo extra space/line undi.")
+        st.error(f"GROQ_API_KEY length tappu! 56 undali, kani {len(api_key)} undi. Extra space/line check chey.")
         st.stop()
-    
+        
     return Groq(api_key=api_key)
 
 def get_working_model():
+    """Available model nundi best dhi select cheyyali"""
     client = get_client()
     try:
         models = client.models.list().data
@@ -38,11 +35,16 @@ def get_working_model():
         return "llama-3.1-8b-instant"
 
 def ask_agent(user_question, stream=False):
+    """Agent tho matladadam"""
     client = get_client()
     messages = [
         {
             "role": "system",
-            "content": "You are 'Spicy Cart Agent'. For recipe questions, give markdown table with Item, Quantity, Approx Price (INR). End with [CART_DATA]item:qty:price,..."
+            "content": """You are 'Spicy Cart Agent'. For recipe/shopping questions:
+1. Give a markdown table with columns: Item | Quantity | Approx Price (INR)
+2. Calculate total at the end
+3. End response with [CART_DATA]item:qty:price,item:qty:price,... for parsing
+4. Keep prices realistic for Indian markets"""
         },
         {"role": "user", "content": user_question}
     ]
