@@ -1,19 +1,17 @@
 import streamlit as st
-import os
-from dotenv import load_dotenv
 from groq import Groq
 
-load_dotenv()
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+# Streamlit secrets nunchi key teeskundam
+api_key = st.secrets["GROQ_API_KEY"]
+client = Groq(api_key=api_key)
 
 def get_working_model():
     """Available models lo okati auto select chestadi"""
     try:
         models = client.models.list().data
-        # Priority order - idi unte ide vadutham
         preferred = [
             "llama-3.3-70b-versatile",
-            "llama3-70b-8192",
+            "llama3-70b-8192", 
             "mixtral-8x7b-32768",
             "llama-3.1-8b-instant",
             "gemma2-9b-it"
@@ -22,18 +20,15 @@ def get_working_model():
 
         for model in preferred:
             if model in available_ids:
-                print(f"Using model: {model}")
                 return model
 
-        # Okavela painavi lev ante, first available model teesko
         if available_ids:
-            print(f"Using fallback model: {available_ids[0]}")
             return available_ids[0]
         else:
             raise Exception("No models available in your Groq account")
     except Exception as e:
-        print(f"Error fetching models: {e}")
-        return "llama-3.1-8b-instant" # Last fallback
+        st.error(f"Error fetching models: {e}")
+        return "llama-3.1-8b-instant"
 
 def ask_agent(user_question, stream=False):
     messages = [
@@ -46,7 +41,7 @@ def ask_agent(user_question, stream=False):
 
     chat_completion = client.chat.completions.create(
         messages=messages,
-        model=get_working_model(), # Auto model selection
+        model=get_working_model(),
         temperature=0.7,
         stream=stream,
     )
