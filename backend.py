@@ -2,8 +2,16 @@ import streamlit as st
 from groq import Groq
 
 def get_client():
-    """Groq client lazy ga create cheyyali"""
-    api_key = st.secrets["GROQ_API_KEY"]
+    if "GROQ_API_KEY" not in st.secrets:
+        st.error("Secret ledu: Streamlit Cloud → Settings → Secrets lo GROQ_API_KEY add chey")
+        st.stop()
+    
+    api_key = str(st.secrets["GROQ_API_KEY"]).strip()
+    
+    if not api_key or api_key == "None":
+        st.error("GROQ_API_KEY empty ga undi. Value check chey")
+        st.stop()
+        
     return Groq(api_key=api_key)
 
 def get_working_model():
