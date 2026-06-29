@@ -1,32 +1,17 @@
 import streamlit as st
 import re
-from backend import ask_agent, mcp_blinkit_search_tool
-
-# ============================================
-# SMART CART AGENT - Kaggle Capstone Project
-# Track: Concierge Agents
-# Concepts Used: 
-# 1. Google ADK Multi-Agent System
-# 2. MCP Server Tools 
-# 3. Security Features
-# 4. Deployability
-# ============================================
+from backend import ask_agent
 
 st.set_page_config(page_title="Smart Cart Agent", page_icon="🛒")
-st.title("🛒 Smart Cart Agent")
-st.caption("ADK-powered shopping assistant. Ask for any list - recipes, party, groceries")
+st.title("🛒 Smart Cart Agent - Price Compare")
+st.caption("ADK Multi-Agent: Finds cheapest price across Blinkit, Flipkart, Amazon, Meesho")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 def parse_cart_data(text):
-    """
-    Extract items from CART_DATA tag. 
-    Security: Filters generic/duplicate/empty items
-    """
+    """Extract items with platform and URL from CART_DATA"""
     cart_data = []
-    seen_items = set()
-    
     cart_match = re.search(r'\[CART_DATA\](.*)', text, re.DOTALL)
     if cart_match:
         cart_string = cart_match.group(1).strip()
@@ -34,55 +19,45 @@ def parse_cart_data(text):
         
         for item in items:
             parts = item.split(':')
-            if len(parts) >= 2:
+            if len(parts) >= 5:
                 name = parts[0].strip()
-                name = re.sub(r'\s*\(.*?\)', '', name).strip()
-                
-                # FILTER: Skip generic names and 'Total'
-                generic_names = ['item', 'product', 'grocery', 'ingredient', 'total', 'items', '']
+                generic_names = ['item', 'product', 'grocery', 'total', '']
                 if name.lower() in generic_names or len(name) < 2:
                     continue
-                
-                # FILTER: Skip duplicates
-                if name.lower() in seen_items:
-                    continue
-                seen_items.add(name.lower())
-                
+                    
                 cart_data.append({
                     "name": name,
                     "qty": parts[1].strip(),
-                    "price": parts[2].strip() if len(parts) > 2 else "0"
+                    "price": parts[2].strip(),
+                    "platform": parts[3].strip(),
+                    "url": parts[4].strip()
                 })
     return cart_data
 
-def show_blinkit_buttons(cart_data):
-    """
-    UI Component: Uses MCP Tool for link generation
-    Powered by MCP Server Tool: blinkit_search
-    """
+def show_best_price_buttons(cart_data):
+    """UI: Show button with platform name and price"""
     if not cart_data:
-        st.warning("No specific items found. Please try a more detailed request.")
+        st.warning("No items found. Try a more specific request.")
         return
         
     st.markdown("---")
-    st.markdown("### 🛒 Add to Blinkit")
-    st.caption("Powered by MCP Server Tool: blinkit_search")
+    st.markdown("### 💰 Best Prices Found")
+    st.caption("Powered by 4 MCP Tools: Blinkit, Flipkart, Amazon, Meesho")
     
     cols = st.columns(3)
     for idx, item in enumerate(cart_data):
-        blinkit_url = mcp_blinkit_search_tool(item["name"])
         with cols[idx % 3]:
-            st.link_button(f"{item['name']}", blinkit_url, use_container_width=True)
+            label = f"{item['name']}\n₹{item['price']} on {item['platform']}"
+            st.link_button(label, item['url'], use_container_width=True)
 
-# Display previous messages
+# Chat UI - same as before but with new button function
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "cart_data" in message and message["cart_data"]:
-            show_blinkit_buttons(message["cart_data"])
+            show_best_price_buttons(message["cart_data"])
 
-# Chat input
-if prompt := st.chat_input("Chicken biryani for 4, or Monthly toiletries..."):
+if prompt := st.chat_input("Chicken biryani for 4..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -91,8 +66,7 @@ if prompt := st.chat_input("Chicken biryani for 4, or Monthly toiletries..."):
         message_placeholder = st.empty()
         full_response = ""
         
-        # ADK Multi-Agent Pipeline runs here
-        with st.spinner("ADK Agents working: Parser -> Pricer -> Compiler..."):
+        with st.spinner("ADK Agents: Searching 4 platforms for best prices..."):
             for chunk in ask_agent(prompt, stream=True):
                 full_response += chunk
                 message_placeholder.markdown(full_response + "▌")
@@ -100,7 +74,7 @@ if prompt := st.chat_input("Chicken biryani for 4, or Monthly toiletries..."):
         cart_data = parse_cart_data(full_response)
         display_response = re.sub(r'\[CART_DATA\].*', '', full_response, flags=re.DOTALL).strip()
         message_placeholder.markdown(display_response)
-        show_blinkit_buttons(cart_data)
+        show_best_price_buttons(cart_data)
         
     st.session_state.messages.append({
         "role": "assistant", 
@@ -108,6 +82,5 @@ if prompt := st.chat_input("Chicken biryani for 4, or Monthly toiletries..."):
         "cart_data": cart_data
     })
 
-# Security Footer
 st.markdown("---")
-st.caption("🔒 Security: No user data stored. API keys secured in Streamlit secrets. Input sanitization active.")
+st.caption("🔒 Security: No user data stored. Prices are simulated for demo. Multi-agent ADK + MCP architecture.")
