@@ -2,144 +2,155 @@ import streamlit as st
 from groq import Groq
 import re
 import urllib.parse
+import concurrent.futures
 
 # ============================================
-# SECURITY FEATURE: API Key Management
-# All keys stored in Streamlit secrets. No hardcoding.
-# User data is not stored or logged anywhere.
+# SECURITY FEATURE
 # ============================================
-
 def get_client():
-    """Create Groq client with API key from secrets"""
     if "GROQ_API_KEY" not in st.secrets:
-        st.error("SECURITY: GROQ_API_KEY not found! Add it in Streamlit Cloud -> Settings -> Secrets")
+        st.error("SECURITY: GROQ_API_KEY not found!")
         st.stop()
-    
     api_key = str(st.secrets["GROQ_API_KEY"]).strip().replace('\n','').replace('\r','')
-    
     if len(api_key)!= 56:
-        st.error(f"SECURITY: Invalid GROQ_API_KEY length. Expected 56, got {len(api_key)}")
+        st.error(f"SECURITY: Invalid GROQ_API_KEY length")
         st.stop()
-        
     return Groq(api_key=api_key)
 
 # ============================================
-# MCP SERVER TOOL: Blinkit Search
-# This function simulates an MCP tool that agents can call
-# In production, this would be a separate MCP server
+# MCP SERVER TOOLS - Multi-Platform Search
+# For Kaggle: We simulate price APIs. In production, use real APIs.
 # ============================================
 
-def mcp_blinkit_search_tool(item_name: str) -> str:
-    """
-    MCP Tool: search_blinkit
-    Description: Generates Blinkit search URL for given item
-    Agent Skill: Tool usage via MCP protocol
-    Security: Input sanitization applied
-    """
+def mcp_blinkit_search(item_name: str) -> dict:
+    """MCP Tool: Blinkit. Returns price and URL"""
     clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
-    if not clean_item:
-        return "https://blinkit.com"
-    
-    search_query = urllib.parse.quote_plus(clean_item)
-    return f"https://blinkit.com/s/?q={search_query}"
+    # SIMULATED PRICE - Replace with real Blinkit API
+    price = hash(clean_item + "blinkit") % 200 + 50 
+    url = f"https://blinkit.com/s/?q={urllib.parse.quote_plus(clean_item)}"
+    return {"platform": "Blinkit", "price": price, "url": url}
+
+def mcp_flipkart_search(item_name: str) -> dict:
+    """MCP Tool: Flipkart Grocery"""
+    clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
+    price = hash(clean_item + "flipkart") % 200 + 45
+    url = f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(clean_item)}"
+    return {"platform": "Flipkart", "price": price, "url": url}
+
+def mcp_amazon_search(item_name: str) -> dict:
+    """MCP Tool: Amazon Fresh"""
+    clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
+    price = hash(clean_item + "amazon") % 200 + 55
+    url = f"https://www.amazon.in/s?k={urllib.parse.quote_plus(clean_item)}"
+    return {"platform": "Amazon", "price": price, "url": url}
+
+def mcp_meesho_search(item_name: str) -> dict:
+    """MCP Tool: Meesho"""
+    clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
+    price = hash(clean_item + "meesho") % 200 + 40
+    url = f"https://www.meesho.com/search?q={urllib.parse.quote_plus(clean_item)}"
+    return {"platform": "Meesho", "price": price, "url": url}
 
 # ============================================
 # GOOGLE ADK MULTI-AGENT SYSTEM
-# Architecture: 3 specialized agents working together
 # ============================================
 
 class RecipeParserAgent:
-    """Agent 1: Parses user request and extracts shopping context"""
+    """Agent 1: Extracts specific items"""
     def __init__(self, client):
         self.client = client
         self.role = """You are RecipeParserAgent. 
-CRITICAL: Extract ONLY specific ingredient/product names. 
-NEVER output generic words like 'item', 'ingredient', 'product', 'grocery'.
-If request is vague, list 5-8 common specific items for that category.
-Example: For 'biryani' output 'Basmati Rice, Chicken, Yogurt, Onions, Garam Masala' not 'item'"""
+CRITICAL: Extract ONLY specific product names. NEVER use 'item', 'product'.
+Output one item per line with quantity. Example: Chicken 500g"""
     
     def run(self, user_request):
         response = self.client.chat.completions.create(
             messages=[
                 {"role": "system", "content": self.role},
-                {"role": "user", "content": f"Extract specific shopping list from: {user_request}. Output only item names and qty, one per line."}
+                {"role": "user", "content": f"Extract specific shopping items from: {user_request}"}
             ],
-            model="llama-3.1-8b-instant",
-            temperature=0.3,
+            model="llama-3.1-8b-instant", temperature=0.3,
         )
         return response.choices[0].message.content
 
-class PriceEstimatorAgent:
-    """Agent 2: Estimates prices for Indian market"""
-    def __init__(self, client):
-        self.client = client
-        self.role = """You are PriceEstimatorAgent. Give realistic INR prices for Indian grocery items.
-Format each line as: Item Name | Quantity | Price
-Use current Indian market rates. Be specific with item names."""
+class PriceCompareAgent:
+    """Agent 2: Compares prices across platforms using MCP tools"""
+    def __init__(self):
+        self.mcp_tools = [
+            mcp_blinkit_search,
+            mcp_flipkart_search, 
+            mcp_amazon_search,
+            mcp_meesho_search
+        ]
     
-    def run(self, items_list):
-        response = self.client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": self.role},
-                {"role": "user", "content": f"Add realistic INR prices for these items:\n{items_list}"}
-            ],
-            model="llama-3.1-8b-instant",
-            temperature=0.5,
-        )
-        return response.choices[0].message.content
+    def find_cheapest(self, item_name):
+        """Calls all MCP tools in parallel and returns cheapest"""
+        results = []
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(tool, item_name) for tool in self.mcp_tools]
+            for future in concurrent.futures.as_completed(futures):
+                results.append(future.result())
+        
+        cheapest = min(results, key=lambda x: x['price'])
+        return cheapest
 
 class CartCompilerAgent:
-    """Agent 3: Compiles final table and adds CART_DATA for UI"""
+    """Agent 3: Compiles final table with cheapest links"""
     def __init__(self, client):
         self.client = client
-        self.role = """You are CartCompilerAgent. CRITICAL RULES:
-1. Use ONLY specific product names. NEVER use generic words like 'item', 'product', 'grocery', 'ingredient'
-2. Format: Markdown table with headers: Item | Quantity | Approx Price (INR)
-3. Add a Total row at the end of table
-4. After table, add [CART_DATA] tag with format: Item1:Qty1:Price1,Item2:Qty2:Price2
-5. In CART_DATA, do NOT include Total row
-6. If you don't know specific items, say 'Please specify recipe' instead of using 'item'
-7. Remove duplicates. No empty names."""
+        self.role = """You are CartCompilerAgent. Format output as:
+1. Markdown table: Item | Qty | Best Price | Platform
+2. Calculate total
+3. End with [CART_DATA]Item1:Qty1:Price1:Platform1:URL1,Item2:Qty2:Price2:Platform2:URL2"""
     
-    def run(self, priced_items):
+    def run(self, items_with_prices):
+        items_str = "\n".join([f"{i['name']} | {i['qty']} | ₹{i['price']} | {i['platform']}" for i in items_with_prices])
         response = self.client.chat.completions.create(
             messages=[
                 {"role": "system", "content": self.role},
-                {"role": "user", "content": f"Compile final shopping cart from:\n{priced_items}"}
+                {"role": "user", "content": f"Compile cart:\n{items_str}"}
             ],
-            model="llama-3.1-8b-instant",
-            temperature=0.7,
+            model="llama-3.1-8b-instant", temperature=0.7,
         )
         return response.choices[0].message.content
 
 # ============================================
-# ADK ORCHESTRATOR: Runs multi-agent workflow
+# ADK ORCHESTRATOR
 # ============================================
 
 def ask_agent(user_question, stream=False):
-    """
-    Main ADK Orchestrator
-    Runs: RecipeParserAgent -> PriceEstimatorAgent -> CartCompilerAgent
-    Uses: MCP Tools for external data
-    Security: All API calls use secured keys
-    """
     client = get_client()
-    
     parser = RecipeParserAgent(client)
-    pricer = PriceEstimatorAgent(client)
+    comparer = PriceCompareAgent()
     compiler = CartCompilerAgent(client)
     
-    if stream:
-        items = parser.run(user_question)
-        priced = pricer.run(items)
-        final = compiler.run(priced)
+    # Step 1: Parse items
+    items_text = parser.run(user_question)
+    items_list = [i.strip() for i in items_text.split('\n') if i.strip()]
+    
+    # Step 2: Find cheapest for each item
+    items_with_prices = []
+    for item_line in items_list[:10]: # Limit to 10 for speed
+        item_name = re.sub(r'\d+.*', '', item_line).strip()
+        qty = re.search(r'(\d+\s*\w+)', item_line)
+        qty = qty.group(1) if qty else "1 unit"
         
+        cheapest = comparer.find_cheapest(item_name)
+        items_with_prices.append({
+            "name": item_name,
+            "qty": qty,
+            "price": cheapest['price'],
+            "platform": cheapest['platform'],
+            "url": cheapest['url']
+        })
+    
+    # Step 3: Compile final output
+    final = compiler.run(items_with_prices)
+    
+    if stream:
         for word in final.split():
             yield word + " "
     else:
-        items = parser.run(user_question)
-        priced = pricer.run(items)
-        final = compiler.run(priced)
         return final
 
-__all__ = ['ask_agent', 'mcp_blinkit_search_tool']
+__all__ = ['ask_agent']
