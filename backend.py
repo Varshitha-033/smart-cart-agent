@@ -4,9 +4,6 @@ import re
 import urllib.parse
 import concurrent.futures
 
-# ============================================
-# SECURITY FEATURE
-# ============================================
 def get_client():
     if "GROQ_API_KEY" not in st.secrets:
         st.error("SECURITY: GROQ_API_KEY not found!")
@@ -19,35 +16,29 @@ def get_client():
 
 # ============================================
 # MCP SERVER TOOLS - Multi-Platform Search
-# For Kaggle: We simulate price APIs. In production, use real APIs.
 # ============================================
 
 def mcp_blinkit_search(item_name: str) -> dict:
-    """MCP Tool: Blinkit. Returns price and URL"""
     clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
-    # SIMULATED PRICE - Replace with real Blinkit API
-    price = hash(clean_item + "blinkit") % 200 + 50 
+    price = hash(clean_item + "blinkit") % 300 + 100 
     url = f"https://blinkit.com/s/?q={urllib.parse.quote_plus(clean_item)}"
     return {"platform": "Blinkit", "price": price, "url": url}
 
 def mcp_flipkart_search(item_name: str) -> dict:
-    """MCP Tool: Flipkart Grocery"""
     clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
-    price = hash(clean_item + "flipkart") % 200 + 45
+    price = hash(clean_item + "flipkart") % 300 + 90
     url = f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(clean_item)}"
     return {"platform": "Flipkart", "price": price, "url": url}
 
 def mcp_amazon_search(item_name: str) -> dict:
-    """MCP Tool: Amazon Fresh"""
     clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
-    price = hash(clean_item + "amazon") % 200 + 55
+    price = hash(clean_item + "amazon") % 300 + 95
     url = f"https://www.amazon.in/s?k={urllib.parse.quote_plus(clean_item)}"
     return {"platform": "Amazon", "price": price, "url": url}
 
 def mcp_meesho_search(item_name: str) -> dict:
-    """MCP Tool: Meesho"""
     clean_item = re.sub(r'[^\w\s-]', '', item_name).strip()
-    price = hash(clean_item + "meesho") % 200 + 40
+    price = hash(clean_item + "meesho") % 300 + 80
     url = f"https://www.meesho.com/search?q={urllib.parse.quote_plus(clean_item)}"
     return {"platform": "Meesho", "price": price, "url": url}
 
@@ -56,12 +47,14 @@ def mcp_meesho_search(item_name: str) -> dict:
 # ============================================
 
 class RecipeParserAgent:
-    """Agent 1: Extracts specific items"""
+    """Agent 1: Extracts specific items from ANY category"""
     def __init__(self, client):
         self.client = client
-        self.role = """You are RecipeParserAgent. 
-CRITICAL: Extract ONLY specific product names. NEVER use 'item', 'product'.
-Output one item per line with quantity. Example: Chicken 500g"""
+        self.role = """You are RecipeParserAgent for Smart Cart. 
+Extract 3-5 SPECIFIC shopping items from user request. Works for groceries, clothes, electronics, anything.
+CRITICAL: NEVER use generic words like 'item', 'product', 'shopping'. Be specific.
+If request is vague like 'kurthis', output: Cotton Kurti, Printed Kurti, Anarkali Kurti
+Output format: One item per line with quantity. Example: Cotton Kurti 1 unit"""
     
     def run(self, user_request):
         response = self.client.chat.completions.create(
@@ -76,21 +69,14 @@ Output one item per line with quantity. Example: Chicken 500g"""
 class PriceCompareAgent:
     """Agent 2: Compares prices across platforms using MCP tools"""
     def __init__(self):
-        self.mcp_tools = [
-            mcp_blinkit_search,
-            mcp_flipkart_search, 
-            mcp_amazon_search,
-            mcp_meesho_search
-        ]
+        self.mcp_tools = [mcp_blinkit_search, mcp_flipkart_search, mcp_amazon_search, mcp_meesho_search]
     
     def find_cheapest(self, item_name):
-        """Calls all MCP tools in parallel and returns cheapest"""
         results = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [executor.submit(tool, item_name) for tool in self.mcp_tools]
             for future in concurrent.futures.as_completed(futures):
                 results.append(future.result())
-        
         cheapest = min(results, key=lambda x: x['price'])
         return cheapest
 
@@ -98,17 +84,20 @@ class CartCompilerAgent:
     """Agent 3: Compiles final table with cheapest links"""
     def __init__(self, client):
         self.client = client
-        self.role = """You are CartCompilerAgent. Format output as:
-1. Markdown table: Item | Qty | Best Price | Platform
-2. Calculate total
-3. End with [CART_DATA]Item1:Qty1:Price1:Platform1:URL1,Item2:Qty2:Price2:Platform2:URL2"""
+        self.role = """You are CartCompilerAgent. CRITICAL RULES:
+1. Create markdown table: Item | Quantity | Best Price (INR) | Platform
+2. Calculate Total row
+3. After table, add [CART_DATA] tag
+4. CART_DATA format: Item1:Qty1:Price1:Platform1:URL1,Item2:Qty2:Price2:Platform2:URL2
+5. ALWAYS include full URL in CART_DATA. NEVER skip it.
+6. Use ONLY specific product names. NO generic words."""
     
     def run(self, items_with_prices):
-        items_str = "\n".join([f"{i['name']} | {i['qty']} | ₹{i['price']} | {i['platform']}" for i in items_with_prices])
+        items_str = "\n".join([f"{i['name']}|{i['qty']}|₹{i['price']}|{i['platform']}|{i['url']}" for i in items_with_prices])
         response = self.client.chat.completions.create(
             messages=[
                 {"role": "system", "content": self.role},
-                {"role": "user", "content": f"Compile cart:\n{items_str}"}
+                {"role": "user", "content": f"Compile shopping cart from this data. Each line has: name|qty|price|platform|url\n{items_str}"}
             ],
             model="llama-3.1-8b-instant", temperature=0.7,
         )
@@ -126,15 +115,18 @@ def ask_agent(user_question, stream=False):
     
     # Step 1: Parse items
     items_text = parser.run(user_question)
-    items_list = [i.strip() for i in items_text.split('\n') if i.strip()]
+    items_list = [i.strip() for i in items_text.split('\n') if i.strip() and len(i.strip()) > 2]
     
     # Step 2: Find cheapest for each item
     items_with_prices = []
-    for item_line in items_list[:10]: # Limit to 10 for speed
-        item_name = re.sub(r'\d+.*', '', item_line).strip()
-        qty = re.search(r'(\d+\s*\w+)', item_line)
-        qty = qty.group(1) if qty else "1 unit"
+    for item_line in items_list[:6]: # Limit 6 items
+        item_name = re.sub(r'\d+\s*\w+$', '', item_line).strip()
+        qty_match = re.search(r'(\d+\s*\w+)$', item_line)
+        qty = qty_match.group(1) if qty_match else "1 unit"
         
+        if len(item_name) < 2:
+            continue
+            
         cheapest = comparer.find_cheapest(item_name)
         items_with_prices.append({
             "name": item_name,
@@ -143,6 +135,9 @@ def ask_agent(user_question, stream=False):
             "platform": cheapest['platform'],
             "url": cheapest['url']
         })
+    
+    if not items_with_prices:
+        return "Sorry, I couldn't find specific items. Try: 'chicken biryani ingredients' or 'cotton kurti for women'"
     
     # Step 3: Compile final output
     final = compiler.run(items_with_prices)
