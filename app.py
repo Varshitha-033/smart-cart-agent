@@ -17,7 +17,7 @@ def parse_cart_data(text):
     cart_match = re.search(r'\[CART_DATA\](.*)', text, re.DOTALL)
     if cart_match:
         cart_string = cart_match.group(1).strip()
-        # FIX: Split items by,, and fields by ||
+        # Split items by,, and fields by ||
         items = cart_string.split(',,')
 
         for item in items:
@@ -53,7 +53,6 @@ def show_blinkit_buttons(cart_data):
     for idx, item in enumerate(cart_data):
         with cols[idx % 3]:
             label = f"{item['name']}\n₹{item['price']}"
-            # FIX: URL is now properly parsed
             st.link_button(label, item['url'], use_container_width=True)
 
 # Chat UI
