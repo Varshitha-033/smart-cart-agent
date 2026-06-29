@@ -36,7 +36,7 @@ def parse_cart_data(text):
     return cart_data
 
 def show_blinkit_buttons(cart_data):
-    """UI: Show Blinkit button for each ingredient - Last time style"""
+    """UI: Show Blinkit button for each ingredient"""
     if not cart_data:
         return
 
@@ -66,7 +66,7 @@ if prompt := st.chat_input("Chicken biryani for 4, or Weekly vegetables..."):
         message_placeholder = st.empty()
         full_response = ""
 
-        with st.spinner("ADK Agents: Searching recipe ingredients..."):
+        with st.spinner("ADK Agents: Processing..."):
             for chunk in ask_agent(prompt, stream=True):
                 full_response += chunk
                 message_placeholder.markdown(full_response + "▌")
