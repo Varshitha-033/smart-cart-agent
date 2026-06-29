@@ -1,86 +1,89 @@
+"""
+Smart Cart Agent - Streamlit UI
+Concierge Agents Track - Kaggle Capstone Project
+"""
+
 import streamlit as st
-import re
-from backend import ask_agent, mcp_blinkit_search_tool
+from backend import CartAgent
 
-st.set_page_config(page_title="Smart Cart Agent - Food Only", page_icon="🛒")
+# Page config
+st.set_page_config(
+    page_title="Smart Cart Agent",
+    page_icon="🛒",
+    layout="centered"
+)
+
+# Initialize Agent
+agent = CartAgent()
+
+# UI Header
 st.title("🛒 Smart Cart Agent")
-st.caption("Food & Recipe Ingredients Only | Powered by Blinkit")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-def parse_cart_data(text):
-    cart_data = []
-    seen_items = set()
-
-    cart_match = re.search(r'\[CART_DATA\](.*)', text, re.DOTALL)
-    if cart_match:
-        cart_string = cart_match.group(1).strip()
-        items = cart_string.split(',,')
-        for item in items:
-            parts = item.split('||')
-            if len(parts) >= 4:
-                name = parts[0].strip()
-                if name.lower() in ['item', 'ingredient', 'total', ''] or len(name) < 2:
-                    continue
-                if name.lower() in seen_items:
-                    continue
-                seen_items.add(name.lower())
-                cart_data.append({
-                    "name": name,
-                    "qty": parts[1].strip(),
-                    "price": parts[2].strip(),
-                    "url": parts[3].strip()
-                })
-    return cart_data
-
-def show_blinkit_buttons(cart_data):
-    if not cart_data:
-        return
-
-    st.markdown("---")
-    st.markdown("### 🛒 Add to Blinkit Cart")
-    st.caption("Powered by MCP Server Tool: blinkit_search")
-
-    cols = st.columns(3)
-    for idx, item in enumerate(cart_data):
-        with cols[idx % 3]:
-            label = f"{item['name']}\n₹{item['price']}"
-            st.link_button(label, item['url'], use_container_width=True)
-
-# Chat UI
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "cart_data" in message and message["cart_data"]:
-            show_blinkit_buttons(message["cart_data"])
-
-if prompt := st.chat_input("Chicken biryani for 4, or Weekly vegetables..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-
-        with st.spinner("ADK Agents: Processing..."):
-            for chunk in ask_agent(prompt, stream=True):
-                full_response += chunk
-                message_placeholder.markdown(full_response + "▌")
-
-        cart_data = parse_cart_data(full_response)
-        display_response = re.sub(r'\[CART_DATA\].*', '', full_response, flags=re.DOTALL).strip()
-        message_placeholder.markdown(display_response)
-
-        if cart_data:
-            show_blinkit_buttons(cart_data)
-
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": display_response,
-        "cart_data": cart_data
-    })
-
+st.markdown("*Your AI Concierge for Indian Grocery Planning*")
 st.markdown("---")
-st.caption("🔒 Security: No user data stored. Food & grocery only. API keys secured.")
+
+# Input Section
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    dish_input = st.text_input(
+        "What do you want to cook?",
+        placeholder="e.g., palak paneer, chicken biryani, sambar",
+        key="dish"
+    )
+
+with col2:
+    people_count = st.number_input(
+        "People",
+        min_value=1,
+        max_value=20,
+        value=4,
+        key="people"
+    )
+
+# Generate Button
+if st.button("🛍️ Generate Shopping List", type="primary", use_container_width=True):
+
+    if not dish_input:
+        st.warning("Please enter a dish name")
+    elif agent.is_greeting(dish_input):
+        # AGENT SKILL: Conversational handling
+        st.info("👋 Hi! Tell me what dish you want to cook and for how many people. I'll create your complete shopping list with prices!")
+    else:
+        with st.spinner("🤖 Agent is planning your shopping list..."):
+            # AGENT WORKFLOW: Call main agent method
+            result = agent.generate_shopping_list(dish_input, people_count)
+
+            if "items" in result and len(result["items"]) > 0:
+                st.success(f"✅ Shopping list ready for {people_count} people!")
+
+                # Display items
+                st.subheader("📋 Your Shopping List")
+                for item in result["items"]:
+                    col1, col2, col3 = st.columns([2, 1])
+                    with col1:
+                        st.write(f"**{item['item']}**")
+                    with col2:
+                        st.write(item['quantity'])
+                    with col3:
+                        st.write(f"₹{item['price_inr']}")
+
+                st.markdown("---")
+                # Total
+                st.metric(
+                    label="💰 Total Estimated Cost",
+                    value=f"₹{result['total_inr']}",
+                    delta=f"For {people_count} people"
+                )
+
+                st.caption(f"Prices from: {result['items'][0]['source']} | {result['agent_version']}")
+            else:
+                st.error("Could not generate list. Please try again with a different dish.")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: gray; font-size: 0.8em;'>
+Built for Kaggle AI Agents Intensive Capstone | Concierge Agents Track<br>
+Agent Skills: Reasoning + Tool Use + Computation | Secure & Stateless
+</div>
+""", unsafe_allow_html=True)
