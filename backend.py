@@ -75,7 +75,7 @@ Answer ONLY: YES or NO"""
     return "YES" in result, "FOOD" if "YES" in result else "NOT_FOOD"
 
 # ============================================
-# AGENT 1: Universal Google Search
+# AGENT 1: Universal Google Search - ALL INGREDIENTS
 # ============================================
 def google_search_any_recipe(user_request, client):
     serpapi_key = get_serpapi_key()
@@ -97,7 +97,7 @@ Output only dish name:"""
         try:
             url = "https://serpapi.com/search"
             params = {
-                "q": f"{dish_name} recipe ingredients list quantity",
+                "q": f"{dish_name} recipe ingredients list with quantities",
                 "api_key": serpapi_key,
                 "engine": "google"
             }
@@ -105,42 +105,46 @@ Output only dish name:"""
             data = resp.json()
             if "organic_results" in data and len(data["organic_results"]) > 0:
                 snippets = []
-                for i in range(min(2, len(data["organic_results"]))):
+                for i in range(min(3, len(data["organic_results"]))):
                     snippets.append(data["organic_results"][i].get("snippet", ""))
                 search_snippet = " ".join(snippets)
         except:
             pass
     
+    # FIX: No limit - Get ALL ingredients from Google
     if search_snippet:
-        extract_prompt = f"""From this Google search result, extract EXACTLY 4-6 main ingredients with quantities.
+        extract_prompt = f"""From this Google search result, extract ALL main ingredients with quantities for the recipe.
 
 Search: {search_snippet}
 User Request: {user_request}
 Dish: {dish_name}
 
 RULES:
-1. Output EXACTLY 4-6 lines
-2. Use EXACT ingredients from search result or user request
-3. If 'mutton' in request, use 'Mutton', NOT 'Chicken'
-4. If 'veg', use vegetables, NOT meat
-5. Format: "Ingredient Name 500g" or "Ingredient Name 1kg" per line
-6. Include realistic quantities: 250g, 500g, 1kg, 1 packet, 2 pieces
-7. Only main cooking ingredients
+1. List ALL main ingredients found in search result - no limit
+2. If recipe needs 10 ingredients, list all 10. If 15, list all 15
+3. Use EXACT ingredients from search result or user request
+4. If 'mutton' in request, use 'Mutton', NOT 'Chicken'
+5. If 'veg', use vegetables, NOT meat
+6. Format: "Ingredient Name 500g" or "Ingredient Name 1kg" per line
+7. Include realistic quantities: 250g, 500g, 1kg, 1 packet, 2 pieces, 1 tbsp
+8. Include all spices, herbs, dairy, vegetables, proteins
+9. Skip water, salt only if mentioned as optional
 
-Output 4-6 ingredients:"""
+Output all ingredients with quantities, one per line:"""
     else:
-        extract_prompt = f"""For the recipe "{dish_name}", list EXACTLY 4-6 main ingredients with quantities.
+        extract_prompt = f"""For the recipe "{dish_name}", list ALL main ingredients with quantities.
 User Request: {user_request}
 
 RULES:
-1. Output EXACTLY 4-6 lines
+1. List ALL main ingredients this recipe needs - no artificial limit
 2. Use EXACT protein/item user mentioned
 3. If 'mutton' in request, use 'Mutton 500g', NOT Chicken
 4. If 'veg', use vegetables
 5. Format: "Ingredient Name 500g" per line
 6. Realistic Indian cooking quantities
+7. Include spices, herbs, dairy, vegetables, proteins - everything needed
 
-Output 4-6 ingredients:"""
+Output all ingredients:"""
 
     response = client.chat.completions.create(
         messages=[{"role": "user", "content": extract_prompt}],
@@ -153,7 +157,7 @@ Output 4-6 ingredients:"""
 # ============================================
 def parse_quantity(qty_str):
     qty_str = qty_str.lower()
-    match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|ml|l|packet|piece|pieces|bunch)', qty_str)
+    match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|ml|l|packet|piece|pieces|bunch|tbsp|tsp)', qty_str)
     if match:
         value = float(match.group(1))
         unit = match.group(2)
@@ -173,7 +177,7 @@ def get_blinkit_price(item_name, qty_str="1 unit"):
         "eggs": {"12": 70, "6": 38, "unit": "pieces"},
         "paneer": {"1kg": 450, "500g": 230, "250g": 120, "200g": 95, "unit": "kg"},
         "tofu": {"200g": 80, "unit": "kg"},
-        "onions": {"1kg": 35, "500g": 20, "250g": 12, "unit": "kg"},
+        "onions": {"1kg": 35, "500g": 20, "250g": 12, "150g": 8, "unit": "kg"},
         "tomatoes": {"1kg": 40, "500g": 22, "250g": 12, "unit": "kg"},
         "potatoes": {"1kg": 35, "500g": 20, "unit": "kg"},
         "potato": {"1kg": 35, "500g": 20, "unit": "kg"},
@@ -183,11 +187,13 @@ def get_blinkit_price(item_name, qty_str="1 unit"):
         "capsicum": {"1kg": 70, "500g": 38, "unit": "kg"},
         "cauliflower": {"1": 40, "unit": "piece"},
         "cabbage": {"1": 30, "unit": "piece"},
-        "spinach": {"250g": 25, "bunch": 20, "unit": "bunch"},
-        "palak": {"250g": 25, "bunch": 20, "unit": "bunch"},
-        "garlic": {"250g": 20, "100g": 10, "unit": "kg"},
+        "spinach": {"250g": 25, "bunch": 20, "300g": 30, "unit": "bunch"},
+        "palak": {"250g": 25, "bunch": 20, "300g": 30, "unit": "bunch"},
+        "spinach puree": {"300g": 25, "200g": 18, "unit": "kg"},
+        "garlic": {"250g": 20, "100g": 10, "50g": 20, "unit": "kg"},
         "ginger": {"250g": 25, "100g": 12, "unit": "kg"},
-        "green chillies": {"100g": 15, "250g": 30, "unit": "kg"},
+        "green chilli": {"100g": 15, "250g": 30, "20g": 2, "unit": "kg"},
+        "green chili": {"100g": 15, "250g": 30, "20g": 2, "unit": "kg"},
         "lemon": {"1": 5, "4": 18, "unit": "piece"},
         "coriander": {"100g": 15, "bunch": 10, "unit": "bunch"},
         "mint": {"100g": 15, "bunch": 10, "unit": "bunch"},
@@ -199,9 +205,10 @@ def get_blinkit_price(item_name, qty_str="1 unit"):
         "butter": {"100g": 55, "500g": 260, "unit": "kg"},
         "oil": {"1l": 150, "500ml": 80, "100ml": 18, "unit": "l"},
         "sunflower oil": {"1l": 150, "unit": "l"},
-        "turmeric": {"100g": 30, "unit": "kg"},
+        "turmeric": {"100g": 30, "50g": 18, "unit": "kg"},
         "chilli powder": {"100g": 40, "unit": "kg"},
         "coriander powder": {"100g": 35, "unit": "kg"},
+        "cumin powder": {"100g": 45, "unit": "kg"},
         "garam masala": {"100g": 50, "50g": 28, "unit": "kg"},
         "biryani masala": {"50g": 35, "100g": 65, "packet": 35, "unit": "packet"},
         "chicken masala": {"50g": 35, "unit": "packet"},
@@ -216,6 +223,9 @@ def get_blinkit_price(item_name, qty_str="1 unit"):
         "jaggery": {"500g": 60, "unit": "kg"},
         "salt": {"1kg": 25, "unit": "kg"},
         "sugar": {"1kg": 50, "unit": "kg"},
+        "cream": {"200ml": 60, "100ml": 35, "unit": "ml"},
+        "kasuri methi": {"25g": 20, "unit": "kg"},
+        "red chilli": {"100g": 40, "unit": "kg"},
     }
     
     clean_name = item_name.lower()
@@ -225,8 +235,6 @@ def get_blinkit_price(item_name, qty_str="1 unit"):
         if key in clean_name:
             if qty_str in price_dict:
                 return price_dict[qty_str]
-            
-            base_unit = price_dict.get("unit", "kg")
             
             if "kg" in unit or unit == "kg":
                 if "1kg" in price_dict:
@@ -300,38 +308,9 @@ def ask_agent(user_question, stream=False):
                 items_list.append(name)
                 item_details[name] = {"qty": qty}
     
-    if len(items_list) < 4:
-        dish_prompt = f"Extract main dish name from: '{user_question}'"
-        dish_resp = client.chat.completions.create(
-            messages=[{"role": "user", "content": dish_prompt}],
-            model="llama-3.1-8b-instant", temperature=0.1,
-        )
-        dish_name = dish_resp.choices[0].message.content.strip()
-        
-        complete_prompt = f"""Complete the ingredient list for "{dish_name}". 
-Current items: {', '.join(items_list)}
-User request: {user_request}
-
-Add missing main ingredients to make total 4-6 items.
-Output ONLY the additional items, one per line with quantity:"""
-
-        complete_resp = client.chat.completions.create(
-            messages=[{"role": "user", "content": complete_prompt}],
-            model=get_working_model(), temperature=0.3,
-        )
-        
-        for line in complete_resp.choices[0].message.content.split('\n'):
-            line = line.strip()
-            if line and len(items_list) < 6:
-                qty_match = re.search(r'(\d+\s*\w+)$', line)
-                qty = qty_match.group(1) if qty_match else "1 unit"
-                name = re.sub(r'\s+\d+\s*\w+$', '', line).strip()
-                if len(name) >= 2 and name not in items_list:
-                    items_list.append(name)
-                    item_details[name] = {"qty": qty}
-    
+    # FIX: No [:6] slice - Take ALL ingredients
     final_items = []
-    for name in items_list[:6]:
+    for name in items_list:
         qty = item_details.get(name, {}).get('qty', '1 unit')
         price = get_blinkit_price(name, qty)
         url = mcp_blinkit_search_tool(name)
