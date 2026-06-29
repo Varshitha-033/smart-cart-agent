@@ -54,6 +54,19 @@ def mcp_blinkit_search_tool(item_name: str) -> str:
     return f"https://blinkit.com/s/?q={search_query}"
 
 # ============================================
+# HELPER: Extract Servings
+# ============================================
+def extract_servings(user_question):
+    """Extract number of people from query"""
+    match = re.search(r'for\s+(\d+)\s*(?:people|person|pax|members)', user_question.lower())
+    if match:
+        return int(match.group(1))
+    match = re.search(r'(\d+)\s*(?:people|person|pax|members)', user_question.lower())
+    if match:
+        return int(match.group(1))
+    return 4 # Default 4 people
+
+# ============================================
 # AGENT 0: Food Request Checker
 # ============================================
 def is_food_request(user_question, client):
@@ -75,9 +88,9 @@ Answer ONLY: YES or NO"""
     return "YES" in result, "FOOD" if "YES" in result else "NOT_FOOD"
 
 # ============================================
-# AGENT 1: Universal Google Search - ALL INGREDIENTS
+# AGENT 1: Universal Google Search - With Scaling
 # ============================================
-def google_search_any_recipe(user_request, client):
+def google_search_any_recipe(user_request, client, servings=4):
     serpapi_key = get_serpapi_key()
     
     dish_prompt = f"""Extract the main dish or recipe name from user request. 
@@ -97,7 +110,7 @@ Output only dish name:"""
         try:
             url = "https://serpapi.com/search"
             params = {
-                "q": f"{dish_name} recipe ingredients list with quantities",
+                "q": f"{dish_name} recipe ingredients list with quantities for {servings} people",
                 "api_key": serpapi_key,
                 "engine": "google"
             }
@@ -111,38 +124,37 @@ Output only dish name:"""
         except:
             pass
     
-    # FIX: No limit - Get ALL ingredients from Google
     if search_snippet:
-        extract_prompt = f"""From this Google search result, extract ALL main ingredients with quantities for the recipe.
+        extract_prompt = f"""From this Google search result, extract ALL main ingredients with quantities for {servings} people.
 
 Search: {search_snippet}
 User Request: {user_request}
 Dish: {dish_name}
+Servings: {servings}
 
 RULES:
-1. List ALL main ingredients found in search result - no limit
-2. If recipe needs 10 ingredients, list all 10. If 15, list all 15
-3. Use EXACT ingredients from search result or user request
-4. If 'mutton' in request, use 'Mutton', NOT 'Chicken'
-5. If 'veg', use vegetables, NOT meat
-6. Format: "Ingredient Name 500g" or "Ingredient Name 1kg" per line
-7. Include realistic quantities: 250g, 500g, 1kg, 1 packet, 2 pieces, 1 tbsp
-8. Include all spices, herbs, dairy, vegetables, proteins
-9. Skip water, salt only if mentioned as optional
+1. List ALL main ingredients - no limit
+2. Quantities should be for {servings} people
+3. If base recipe is for 4 people and user asks for 2, scale down by 0.5x
+4. If base recipe is for 4 people and user asks for 6, scale up by 1.5x
+5. Use EXACT ingredients from search result or user request
+6. If 'mutton' in request, use 'Mutton', NOT 'Chicken'
+7. Format: "Ingredient Name 500g" or "Ingredient Name 1kg" per line
+8. Include realistic quantities based on {servings} people
 
-Output all ingredients with quantities, one per line:"""
+Output all ingredients with scaled quantities:"""
     else:
-        extract_prompt = f"""For the recipe "{dish_name}", list ALL main ingredients with quantities.
+        extract_prompt = f"""For the recipe "{dish_name}", list ALL main ingredients with quantities for {servings} people.
 User Request: {user_request}
 
 RULES:
-1. List ALL main ingredients this recipe needs - no artificial limit
-2. Use EXACT protein/item user mentioned
-3. If 'mutton' in request, use 'Mutton 500g', NOT Chicken
-4. If 'veg', use vegetables
-5. Format: "Ingredient Name 500g" per line
-6. Realistic Indian cooking quantities
-7. Include spices, herbs, dairy, vegetables, proteins - everything needed
+1. List ALL main ingredients this recipe needs for {servings} people
+2. Base calculation: If standard recipe is for 4 people, scale accordingly
+3. For 2 people: 0.5x quantities. For 6 people: 1.5x quantities
+4. Use EXACT protein/item user mentioned
+5. If 'mutton' in request, use 'Mutton', NOT Chicken
+6. Format: "Ingredient Name 500g" per line
+7. Realistic Indian cooking quantities for {servings} people
 
 Output all ingredients:"""
 
@@ -166,8 +178,8 @@ def parse_quantity(qty_str):
 
 def get_blinkit_price(item_name, qty_str="1 unit"):
     base_prices = {
-        "basmati rice": {"1kg": 180, "500g": 95, "unit": "kg"},
-        "rice": {"1kg": 60, "500g": 35, "unit": "kg"},
+        "basmati rice": {"1kg": 180, "500g": 95, "250g": 50, "unit": "kg"},
+        "rice": {"1kg": 60, "500g": 35, "250g": 20, "unit": "kg"},
         "wheat flour": {"1kg": 45, "500g": 25, "unit": "kg"},
         "atta": {"1kg": 45, "500g": 25, "unit": "kg"},
         "mutton": {"1kg": 850, "500g": 450, "250g": 230, "unit": "kg"},
@@ -279,13 +291,16 @@ def get_blinkit_price(item_name, qty_str="1 unit"):
 def ask_agent(user_question, stream=False):
     client = get_client()
     
+    # Extract servings first
+    servings = extract_servings(user_question)
+    
     is_food, reason = is_food_request(user_question, client)
     
     if not is_food:
         if reason == "GREETING":
-            response = "Hi! I'm Smart Cart Agent. Ask me for food recipe ingredients.\n\nExamples:\n- Mutton biryani for 2\n- Palak paneer\n- Weekly vegetables list\n- Dal tadka"
+            response = f"Hi! I'm Smart Cart Agent. Ask me for food recipe ingredients.\n\nExamples:\n- Mutton biryani for 2\n- Palak paneer for 4\n- Weekly vegetables list\n- Dal tadka for 6"
         else:
-            response = "Sorry, I can only help with food recipes & grocery ingredients.\n\nTry: 'Chicken curry' or 'Veg pulao' or 'Rajma chawal'"
+            response = "Sorry, I can only help with food recipes & grocery ingredients.\n\nTry: 'Chicken curry for 4' or 'Veg pulao for 2' or 'Rajma chawal for 6'"
         
         if stream:
             for word in response.split():
@@ -294,7 +309,7 @@ def ask_agent(user_question, stream=False):
             return response
         return
     
-    items_text = google_search_any_recipe(user_question, client)
+    items_text = google_search_any_recipe(user_question, client, servings)
     
     items_list = []
     item_details = {}
@@ -308,7 +323,6 @@ def ask_agent(user_question, stream=False):
                 items_list.append(name)
                 item_details[name] = {"qty": qty}
     
-    # FIX: No [:6] slice - Take ALL ingredients
     final_items = []
     for name in items_list:
         qty = item_details.get(name, {}).get('qty', '1 unit')
@@ -323,7 +337,7 @@ def ask_agent(user_question, stream=False):
     
     response = client.chat.completions.create(
         messages=[
-            {"role": "system", "content": "Create markdown table with headers Item|Quantity|Approx Price (INR) and add Total row. Output only table."},
+            {"role": "system", "content": f"Create markdown table with headers Item|Quantity|Approx Price (INR) and add Total row. This is for {servings} people. Output only table."},
             {"role": "user", "content": f"Create table for:\n{table_str}"}
         ],
         model=get_working_model(), temperature=0.3,
@@ -332,7 +346,7 @@ def ask_agent(user_question, stream=False):
     
     cart_data_parts = [f"{i['name']}||{i['qty']}||{i['price']}||{i['url']}" for i in final_items]
     cart_data_string = ",,".join(cart_data_parts)
-    final = f"{table}\n\n[CART_DATA]{cart_data_string}"
+    final = f"**For {servings} people**\n\n{table}\n\n[CART_DATA]{cart_data_string}"
     
     if stream:
         for word in final.split():
