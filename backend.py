@@ -2,21 +2,21 @@ import streamlit as st
 from groq import Groq
 
 def get_client():
-    """Groq client lazy ga create cheyyali"""
+    """Create Groq client with API key from secrets"""
     if "GROQ_API_KEY" not in st.secrets:
-        st.error("GROQ_API_KEY secret ledu! Streamlit Cloud → Settings → Secrets lo add chey")
+        st.error("GROQ_API_KEY not found! Add it in Streamlit Cloud → Settings → Secrets")
         st.stop()
     
     api_key = str(st.secrets["GROQ_API_KEY"]).strip().replace('\n','').replace('\r','')
     
     if len(api_key)!= 56:
-        st.error(f"GROQ_API_KEY length tappu! 56 undali, kani {len(api_key)} undi. Extra space/line check chey.")
+        st.error(f"Invalid GROQ_API_KEY length. Expected 56, got {len(api_key)}. Check for extra spaces.")
         st.stop()
         
     return Groq(api_key=api_key)
 
 def get_working_model():
-    """Available model nundi best dhi select cheyyali"""
+    """Select best available model from Groq"""
     client = get_client()
     try:
         models = client.models.list().data
@@ -35,7 +35,7 @@ def get_working_model():
         return "llama-3.1-8b-instant"
 
 def ask_agent(user_question, stream=False):
-    """Agent tho matladadam"""
+    """Send request to Groq agent"""
     client = get_client()
     messages = [
         {
