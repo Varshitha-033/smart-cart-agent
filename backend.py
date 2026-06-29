@@ -1,12 +1,14 @@
 import streamlit as st
 from groq import Groq
 
-# Streamlit secrets nunchi key teeskundam
-api_key = st.secrets["GROQ_API_KEY"]
-client = Groq(api_key=api_key)
+def get_client():
+    """Groq client lazy ga create cheyyali"""
+    api_key = st.secrets["GROQ_API_KEY"]
+    return Groq(api_key=api_key)
 
 def get_working_model():
     """Available models lo okati auto select chestadi"""
+    client = get_client() # Ikkada create chestunnam
     try:
         models = client.models.list().data
         preferred = [
@@ -25,12 +27,13 @@ def get_working_model():
         if available_ids:
             return available_ids[0]
         else:
-            raise Exception("No models available in your Groq account")
+            raise Exception("No models available")
     except Exception as e:
         st.error(f"Error fetching models: {e}")
         return "llama-3.1-8b-instant"
 
 def ask_agent(user_question, stream=False):
+    client = get_client() # Ikkada kuda create chestunnam
     messages = [
         {
             "role": "system",
