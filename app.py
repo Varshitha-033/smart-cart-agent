@@ -5,13 +5,13 @@ from backend import ask_agent
 
 st.set_page_config(page_title="Spicy Cart Agent", page_icon="🛒")
 st.title("🛒 Spicy Cart Agent")
-st.caption("Recipe adugu, Blinkit lo direct add chey!")
+st.caption("Ask for recipes, get shopping list with Blinkit links")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 def parse_cart_data(text):
-    """CART_DATA nundi items teeyadam"""
+    """Extract items from CART_DATA tag"""
     cart_data = []
     cart_match = re.search(r'\[CART_DATA\](.*)', text, re.DOTALL)
     if cart_match:
@@ -31,13 +31,13 @@ def parse_cart_data(text):
     return cart_data
 
 def show_blinkit_buttons(cart_data):
-    """Blinkit buttons display cheyyadam"""
+    """Display Blinkit search buttons for each item"""
     if not cart_data:
         return
         
     st.markdown("---")
     st.markdown("### 🛒 Add to Blinkit")
-    st.caption("Prati item button click chey → Blinkit lo open avtadi → Add kottey")
+    st.caption("Click each button to search on Blinkit, then add to cart")
     
     cols = st.columns(3)
     for idx, item in enumerate(cart_data):
@@ -46,15 +46,15 @@ def show_blinkit_buttons(cart_data):
         with cols[idx % 3]:
             st.link_button(f"{item['name']}", blinkit_url, use_container_width=True)
 
-# Old messages display
+# Display previous messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "cart_data" in message and message["cart_data"]:
             show_blinkit_buttons(message["cart_data"])
 
-# User input
-if prompt := st.chat_input("Chicken biryani 4 mandiki..."):
+# Chat input
+if prompt := st.chat_input("Chicken biryani for 4 people..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
