@@ -46,11 +46,9 @@ if st.button("🛍️ Generate Shopping List", type="primary", use_container_wid
     if not dish_input:
         st.warning("Please enter a dish name")
     elif agent.is_greeting(dish_input):
-        # AGENT SKILL: Conversational handling
         st.info("👋 Hi! Tell me what dish you want to cook and for how many people. I'll create your complete shopping list with prices!")
     else:
         with st.spinner("🤖 Agent is planning your shopping list..."):
-            # AGENT WORKFLOW: Call main agent method
             result = agent.generate_shopping_list(dish_input, people_count)
 
             if "items" in result and len(result["items"]) > 0:
@@ -58,8 +56,10 @@ if st.button("🛍️ Generate Shopping List", type="primary", use_container_wid
 
                 # Display items
                 st.subheader("📋 Your Shopping List")
+
+                # FIX: 3 columns correct ga ichanu
                 for item in result["items"]:
-                    col1, col2, col3 = st.columns([2, 1])
+                    col1, col2, col3 = st.columns([3, 2, 1])
                     with col1:
                         st.write(f"**{item['item']}**")
                     with col2:
@@ -75,7 +75,9 @@ if st.button("🛍️ Generate Shopping List", type="primary", use_container_wid
                     delta=f"For {people_count} people"
                 )
 
-                st.caption(f"Prices from: {result['items'][0]['source']} | {result['agent_version']}")
+                # Show source only if items exist
+                if len(result["items"]) > 0:
+                    st.caption(f"Prices from: {result['items'][0]['source']} | {result['agent_version']}")
             else:
                 st.error("Could not generate list. Please try again with a different dish.")
 
