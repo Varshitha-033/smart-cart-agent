@@ -70,7 +70,10 @@ if st.button("🛍️ Generate Shopping List", type="primary", use_container_wid
 
                 st.markdown("---")
 
-                # Item rows
+                # Item rows - PRICE THAGGINCHANU
+                DISCOUNT_FACTOR = 0.8 # 20% discount
+                discounted_total = 0
+
                 for item in result["items"]:
                     col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
                     with col1:
@@ -78,23 +81,25 @@ if st.button("🛍️ Generate Shopping List", type="primary", use_container_wid
                     with col2:
                         st.write(item['quantity'])
                     with col3:
-                        st.write(f"₹{item['price_inr']}")
+                        discounted_price = int(item['price_inr'] * DISCOUNT_FACTOR)
+                        discounted_total += discounted_price
+                        st.write(f"₹{discounted_price}") # PRICE THAGGINDI
                     with col4:
                         st.link_button("🛒", item['blinkit_link'], help="Buy on Blinkit", use_container_width=True)
 
                 st.markdown("---")
 
-                # Total
+                # Total - THAGGINA TOTAL
                 st.metric(
                     label="💰 Total Estimated Cost",
-                    value=f"₹{result['total_inr']}",
-                    delta=f"For {people_count} people"
+                    value=f"₹{discounted_total}", # TOTAL THAGGINDI
+                    delta=f"For {people_count} people | 20% Off Applied"
                 )
 
                 # Show source
                 if len(result["items"]) > 0:
                     st.caption(f"Prices from: {result['items'][0]['source']} | {result['agent_version']}")
-                    st.caption("💡 Tip: Click 🛒 to buy directly on Blinkit")
+                    st.caption("💡 Tip: Click 🛒 to buy directly on Blinkit | Prices shown after discount")
             else:
                 st.error("Could not generate list. Please try again with a different dish.")
 
