@@ -10,10 +10,11 @@ MIN_PRICE_PER_PERSON = {
     "pizza": 199,
     "meal": 120,
     "thali": 100,
-    "sandwich": 80
+    "sandwich": 80,
+    "dosa": 60
 }
 
-# ===== DEFAULT INGREDIENTS WITH SCALING =====
+# ===== INGREDIENTS WITH SCALING =====
 INGREDIENTS_MAP = {
     "biryani": {
         "Basmati Rice": {"base": 250, "unit": "g"},
@@ -21,7 +22,9 @@ INGREDIENTS_MAP = {
         "Biryani Masala": {"base": 1, "unit": "packet"},
         "Onions": {"base": 150, "unit": "g"},
         "Curd": {"base": 100, "unit": "ml"},
-        "Ghee": {"base": 50, "unit": "ml"}
+        "Ghee": {"base": 50, "unit": "ml"},
+        "Mint Leaves": {"base": 1, "unit": "bunch"},
+        "Coriander Leaves": {"base": 1, "unit": "bunch"}
     },
     "burger": {
         "Burger Buns": {"base": 1, "unit": "pc"},
@@ -29,7 +32,8 @@ INGREDIENTS_MAP = {
         "Cheese Slices": {"base": 1, "unit": "pc"},
         "Lettuce": {"base": 20, "unit": "g"},
         "Tomato": {"base": 50, "unit": "g"},
-        "Mayonnaise": {"base": 1, "unit": "packet"}
+        "Mayonnaise": {"base": 1, "unit": "packet"},
+        "Ketchup": {"base": 1, "unit": "packet"}
     },
     "pizza": {
         "Pizza Base": {"base": 1, "unit": "pc"},
@@ -37,14 +41,26 @@ INGREDIENTS_MAP = {
         "Mozzarella Cheese": {"base": 100, "unit": "g"},
         "Capsicum": {"base": 50, "unit": "g"},
         "Onion": {"base": 50, "unit": "g"},
-        "Sweet Corn": {"base": 50, "unit": "g"}
+        "Sweet Corn": {"base": 50, "unit": "g"},
+        "Oregano": {"base": 1, "unit": "packet"},
+        "Chilli Flakes": {"base": 1, "unit": "packet"}
     },
     "thali": {
         "Rice": {"base": 200, "unit": "g"},
         "Toor Dal": {"base": 100, "unit": "g"},
         "Vegetables Mix": {"base": 200, "unit": "g"},
         "Curd": {"base": 100, "unit": "ml"},
-        "Chapati Flour": {"base": 150, "unit": "g"}
+        "Chapati Flour": {"base": 150, "unit": "g"},
+        "Pickle": {"base": 1, "unit": "bottle"},
+        "Papad": {"base": 1, "unit": "packet"}
+    },
+    "dosa": {
+        "Dosa Batter": {"base": 500, "unit": "g"},
+        "Potato": {"base": 250, "unit": "g"},
+        "Onion": {"base": 100, "unit": "g"},
+        "Coconut Chutney Mix": {"base": 1, "unit": "packet"},
+        "Sambar Powder": {"base": 1, "unit": "packet"},
+        "Oil": {"base": 100, "unit": "ml"}
     }
 }
 
@@ -56,53 +72,41 @@ def calculate_price(item, qty):
             break
     return base_price * int(qty)
 
-def create_blinkit_cart_link(ingredients_list):
-    query = ",".join(ingredients_list)
-    encoded_query = urllib.parse.quote(query)
-    return f"https://blinkit.com/s/?q={encoded_query}"
+def create_blinkit_link(item_name):
+    """Single item ki Blinkit search link"""
+    encoded = urllib.parse.quote(item_name)
+    return f"https://blinkit.com/s/?q={encoded}"
 
 def get_scaled_ingredients(item, qty):
-    """AI fail ayina manual ga scale chesi istadi"""
+    """All ingredients with proper scaling"""
     base_items = INGREDIENTS_MAP.get(item.lower(), {})
-    scaled_list = []
-    search_items = []
+    scaled_data = []
 
     for ing, data in base_items.items():
         scaled_qty = data["base"] * qty
         unit = data["unit"]
-        # Round to nice numbers
+
+        # Format nicely
         if unit == "g" and scaled_qty >= 1000:
-            scaled_list.append(f"{ing} - {scaled_qty/1000:.1f}kg")
+            qty_str = f"{scaled_qty/1000:.1f}kg"
         elif unit == "ml" and scaled_qty >= 1000:
-            scaled_list.append(f"{ing} - {scaled_qty/1000:.1f}L")
+            qty_str = f"{scaled_qty/1000:.1f}L"
+        elif unit in ["packet", "pc", "bunch", "bottle"]:
+            qty_str = f"{int(scaled_qty)} {unit}"
         else:
-            scaled_list.append(f"{ing} - {int(scaled_qty)}{unit}")
+            qty_str = f"{int(scaled_qty)}{unit}"
 
-        search_items.append(ing)
+        scaled_data.append({
+            "name": ing,
+            "qty": qty_str,
+            "link": create_blinkit_link(ing)
+        })
 
-    return scaled_list, search_items
-
-def get_ai_ingredients(item, qty):
-    """Groq tho try chey, fail aithe None return"""
-    try:
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-        prompt = f"""For {qty} person {item}, list ingredients with quantity.
-Format: Item - Quantity
-No extra text. Indian portions."""
-
-        response = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=400
-        )
-        return response.choices[0].message.content
-    except:
-        return None
+    return scaled_data
 
 # ===== UI =====
 st.title("🛒 Smart Cart Agent")
-st.subheader("Ingredients List + Blinkit Cart Link Generator")
+st.subheader("All Ingredients + Individual Blinkit Links")
 
 col1, col2, col3 = st.columns([2, 1, 1])
 
@@ -129,41 +133,43 @@ if generate_btn:
         st.metric("Min Total", f"₹{total}")
 
     st.divider()
-    st.subheader("📝 Ingredients List")
+    st.subheader("📝 Ingredients List - Click to Add")
 
-    # Try AI first, fallback to manual scaling
-    ai_result = get_ai_ingredients(item, qty)
+    ingredients = get_scaled_ingredients(item, qty)
 
-    if ai_result:
-        st.code(ai_result, language=None)
-        # Extract for blinkit
-        ingredients_for_link = []
-        for line in ai_result.split('\n'):
-            if '-' in line:
-                ingredients_for_link.append(line.split('-')[0].strip())
-    else:
-        st.warning("AI failed. Using calculated portions.")
-        scaled_list, ingredients_for_link = get_scaled_ingredients(item, qty)
-        for ing in scaled_list:
-            st.write(f"- {ing}")
+    # Table format with individual links
+    for ing in ingredients:
+        col1, col2, col3 = st.columns([3, 2, 2])
+        with col1:
+            st.write(f"**{ing['name']}**")
+        with col2:
+            st.write(ing['qty'])
+        with col3:
+            st.link_button("🛍️ Add to Cart", ing['link'], use_container_width=True)
 
-    # Blinkit Link - AI fail ayina vastadi
-    if ingredients_for_link:
-        cart_link = create_blinkit_cart_link(ingredients_for_link[:8])
-        st.success("✅ Cart Ready!")
-        st.link_button(
-            "🛍️ Add All to Blinkit Cart",
-            cart_link,
-            use_container_width=True,
-            type="primary"
-        )
-        st.caption(f"Search includes: {', '.join(ingredients_for_link[:6])}...")
+    st.divider()
+
+    # Master cart link - ALL items
+    all_items = [ing['name'] for ing in ingredients]
+    master_link = create_blinkit_link(",".join(all_items))
+
+    st.success(f"✅ **{len(ingredients)} items ready** for {qty} person {item.title()}")
+    st.link_button(
+        "🛒 Add ALL Items to Blinkit at Once",
+        master_link,
+        use_container_width=True,
+        type="primary"
+    )
+    st.caption("Or click individual 'Add to Cart' buttons above")
 
 # ===== SIDEBAR =====
 with st.sidebar:
     st.header("💰 Base Prices")
     for food, price in MIN_PRICE_PER_PERSON.items():
         st.markdown(f"**{food.title()}**: ₹{price}/person")
+
+    st.divider()
+    st.info("**New Features:**\n- All ingredients shown\n- Individual Blinkit link per item\n- Auto-scaled quantities\n- Master 'Add All' button")
 
     st.divider()
     st.caption("Kaggle AI Agents Capstone 2026")
