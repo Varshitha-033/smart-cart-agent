@@ -1,121 +1,130 @@
 import streamlit as st
-import re
+from langchain_groq import ChatGroq
+from langchain.agents import initialize_agent, AgentType
+from langchain.tools import Tool
+from serpapi import GoogleSearch
+import os
 
 # ===== CONFIG =====
-st.set_page_config(page_title="Smart Cart Agent", page_icon="🛒", layout="wide")
+st.set_page_config(page_title="Smart Cart Agent", page_icon="🛒")
 
-# ===== PRICE FLOOR - EKKADA CHANGE CHEYALI =====
+# ===== PRICE FLOOR - NEW ADDITION =====
 MIN_PRICE_PER_PERSON = {
     "biryani": 150,
     "burger": 99,
     "pizza": 199,
     "meal": 120,
-    "thali": 100,
-    "sandwich": 80,
-    "roll": 90,
-    "chicken": 180,
-    "mutton": 250,
-    "dosa": 60,
-    "idli": 40
+    "thali": 100
 }
 
-DEFAULT_PRICE = 100
-
-# ===== PRICE CALCULATOR =====
-def calculate_item_price(item_name, qty=1):
-    """Minimum price enforce chestadi. No API needed."""
-    if not item_name:
-        return DEFAULT_PRICE * qty
-    
+def enforce_price_floor(item_name, api_price=None):
+    """API price takkuva unna minimum price istadi"""
     item_lower = item_name.lower().strip()
-    
-    # 1. Base price find chey
-    base_price = DEFAULT_PRICE
+
+    base_price = 100 # default
     for food, min_val in MIN_PRICE_PER_PERSON.items():
         if food in item_lower:
             base_price = min_val
             break
-    
-    # 2. Quantity multiply
-    total = base_price * int(qty)
-    return int(total)
 
-# ===== PARSE USER INPUT =====
-def parse_query(query):
-    """'2 biryani' nunchi qty=2, item=biryani teestadi"""
-    query = query.lower().strip()
-    
-    # Number extract chey
-    qty_match = re.search(r'\d+', query)
-    qty = int(qty_match.group()) if qty_match else 1
-    
-    # Item extract chey - number teesi migilindi
-    item = re.sub(r'\d+', '', query).strip()
-    item = item.replace("person", "").replace("people", "").strip()
-    
-    if not item:
-        item = "meal"
-    
-    return item, qty
+    if api_price and isinstance(api_price, (int, float)) and api_price > 0:
+        return max(api_price, base_price) # Yekkuva undedi
+    else:
+        return base_price
 
-# ===== STREAMLIT UI =====
+# ===== SERPAPI TOOL WITH PRICE FLOOR =====
+def search_grocery_price(item):
+    """Search price and apply minimum floor"""
+    try:
+        params = {
+            "q": f"{item} price India",
+            "api_key": st.secrets["SERPAPI_KEY"],
+            "engine": "google_shopping"
+        }
+        search = GoogleSearch(params)
+        results = search.get_dict()
+
+        api_price = None
+        if "shopping_results" in results and results["shopping_results"]:
+            price_str = results["shopping_results"][0].get("price", "0")
+            api_price = int(''.join(filter(str.isdigit, price_str[:6])))
+    except:
+        api_price = None
+
+    # Price floor apply chesi return chey
+    final_price = enforce_price_floor(item, api_price)
+    return f"Price for {item}: ₹{final_price}"
+
+price_tool = Tool(
+    name="GroceryPriceChecker",
+    func=search_grocery_price,
+    description="Get grocery prices with minimum floor. Biryani ₹150+, Burger ₹99+ per person"
+)
+
+# ===== AGENT SETUP - NEE OLD PROMPT + PRICE RULE =====
+SYSTEM_PROMPT = """
+You are Smart Cart Agent for Indian families.
+
+CRITICAL PRICING RULES:
+1. Biryani = MINIMUM ₹150 per person
+2. Burger = MINIMUM ₹99 per person
+3. Pizza = MINIMUM ₹199 per person
+4. Never quote below these prices even if search shows cheaper
+5. Always use GroceryPriceChecker tool for prices
+
+You help plan grocery meals and create Blinkit cart links.
+"""
+
+def init_agent():
+    llm = ChatGroq(
+        groq_api_key=st.secrets["GROQ_API_KEY"],
+        model_name="llama-3.1-70b-versatile",
+        temperature=0.3
+    )
+
+    tools = [price_tool]
+
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        agent_kwargs={"system_message": SYSTEM_PROMPT}
+    )
+    return agent
+
+# ===== STREAMLIT UI - NEE OLD UI EXACT GA =====
 st.title("🛒 Smart Cart Agent - AI Grocery Planner")
-st.caption("Kaggle Capstone 2026 | Biryani ₹150 | Burger ₹99 minimum per person")
+st.caption("Kaggle Capstone 2026")
 
 # Session state
-if "history" not in st.session_state:
-    st.session_state.history = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# Input
-col1, col2 = st.columns([3, 1])
-with col1:
-    user_input = st.text_input(
-        "What do you want?", 
-        placeholder="Ex: 2 biryani, 1 burger, 3 people pizza",
-        label_visibility="collapsed"
-    )
-with col2:
-    calc_btn = st.button("Calculate 💰", use_container_width=True, type="primary")
+# Display chat history
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# Calculate
-if calc_btn and user_input:
-    item, qty = parse_query(user_input)
-    price = calculate_item_price(item, qty)
-    
-    result = f"**{item.title()} x {qty} person** = **₹{price}**"
-    st.session_state.history.insert(0, result)
-    
-    st.success(result)
-    st.balloons()
+# Chat input
+if prompt := st.chat_input("Ask: '1 person biryani meal plan'"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-# Show History
-if st.session_state.history:
-    st.divider()
-    st.subheader("📋 Calculation History")
-    for i, record in enumerate(st.session_state.history[:10]):
-        st.markdown(f"{i+1}. {record}")
+    with st.chat_message("assistant"):
+        with st.spinner("Finding best prices..."):
+            agent = init_agent()
+            response = agent.run(prompt)
+            st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
 
 # ===== SIDEBAR - PRICE LIST =====
 with st.sidebar:
-    st.header("💰 Base Price List")
-    st.caption("Minimum per person - No API")
-    
+    st.header("💰 Base Prices")
+    st.caption("Minimum per person")
     for item, price in MIN_PRICE_PER_PERSON.items():
         st.markdown(f"**{item.title()}**: ₹{price}")
-    
-    st.divider()
-    st.info("**How it works:**\n1. Type item + qty\n2. Get instant price\n3. Biryani always ₹150+\n4. Burger always ₹99+")
-    
+
     st.divider()
     st.caption("Kaggle AI Agents Capstone 2026")
-    st.link_button("View GitHub", "https://github.com/varshithagudisa/smart-cart-agent")
-
-# ===== FOOTER =====
-st.divider()
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Biryani Base", "₹150")
-with col2:
-    st.metric("Burger Base", "₹99")
-with col3:
-    st.metric("Pizza Base", "₹199")
