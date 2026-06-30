@@ -1,7 +1,11 @@
 import streamlit as st
 import urllib.parse
 from groq import Groq
-from serpapi import GoogleSearch
+try:
+    from serpapi import GoogleSearch
+    SERPAPI_AVAILABLE = True
+except:
+    SERPAPI_AVAILABLE = False
 
 st.set_page_config(page_title="Smart Cart Agent", page_icon="🛒", layout="wide")
 
@@ -16,10 +20,11 @@ MIN_PRICE_PER_PERSON = {
     "idli": 40,
     "pasta": 130,
     "noodles": 80,
+    "noodels": 80, # typo handle
+    "maggi": 50,
     "roll": 90
 }
 
-# Known recipes - lekunte Google/AI generate chestadi
 INGREDIENTS_MAP = {
     "biryani": {
         "Basmati Rice": {"base": 250, "unit": "g"},
@@ -56,14 +61,20 @@ INGREDIENTS_MAP = {
         "Potato": {"base": 250, "unit": "g"},
         "Onion": {"base": 100, "unit": "g"},
         "Coconut Chutney Mix": {"base": 1, "unit": "packet"}
+    },
+    "noodles": {
+        "Noodles": {"base": 1, "unit": "packet"},
+        "Mixed Vegetables": {"base": 200, "unit": "g"},
+        "Soy Sauce": {"base": 1, "unit": "bottle"},
+        "Oil": {"base": 50, "unit": "ml"},
+        "Onion": {"base": 100, "unit": "g"},
+        "Capsicum": {"base": 100, "unit": "g"}
     }
 }
 
 def calculate_price(item, qty):
-    """Price floor - known items ki minimum, lekapothe default ₹100"""
     item_lower = item.lower().strip()
-    base_price = 100 # Default for unknown items
-
+    base_price = 100
     for food, min_val in MIN_PRICE_PER_PERSON.items():
         if food in item_lower:
             base_price = min_val
@@ -74,65 +85,51 @@ def create_blinkit_link(item_name):
     encoded = urllib.parse.quote(item_name)
     return f"https://blinkit.com/s/?q={encoded}"
 
-def fetch_ingredients_from_google(item, qty):
-    """Google nundi ingredients fetch chey - SerpAPI"""
+def fetch_ingredients_ai(item, qty):
+    """Groq tho direct generate - SerpAPI avasaram ledu"""
     try:
-        params = {
-            "q": f"{item} recipe ingredients list for {qty} person",
-            "api_key": st.secrets["SERPAPI_KEY"],
-            "engine": "google"
-        }
-        search = GoogleSearch(params)
-        results = search.get_dict()
-
-        # Google snippet lo ingredients extract chey
-        ingredients_text = ""
-        if "answer_box" in results and "snippet" in results["answer_box"]:
-            ingredients_text = results["answer_box"]["snippet"]
-        elif "organic_results" in results and results["organic_results"]:
-            ingredients_text = results["organic_results"][0].get("snippet", "")
-
-        # Groq tho parse chesi clean format lo teesuko
-        if ingredients_text:
-            client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-            prompt = f"""From this text: "{ingredients_text}"
-Extract ingredients for {qty} person {item}.
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+        prompt = f"""For {qty} person {item} Indian recipe, list 5-8 main ingredients with quantity.
 
 Format EXACTLY like this, one per line:
 Ingredient Name - Quantity
 
-Example:
-Rice - 500g
-Chicken - 250g
+Example for Veg Noodles:
+Noodles - 1 packet
+Mixed Vegetables - 200g
+Soy Sauce - 1 bottle
+Oil - 50ml
+Onion - 100g
 
-No extra text. No bullets. Indian portions."""
+No extra text. Indian portions. Correct spelling."""
 
-            response = client.chat.completions.create(
-                model="llama-3.1-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=300
-            )
+        response = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=300
+        )
 
-            result = []
-            for line in response.choices[0].message.content.strip().split('\n'):
-                if '-' in line:
-                    parts = line.split('-')
-                    name = parts[0].strip()
-                    qty_str = parts[1].strip()
-                    if name and qty_str:
-                        result.append({
-                            "name": name,
-                            "qty": qty_str,
-                            "link": create_blinkit_link(name)
-                        })
-            return result if result else None
-    except:
+        result = []
+        for line in response.choices[0].message.content.strip().split('\n'):
+            if '-' in line:
+                parts = line.split('-')
+                name = parts[0].strip()
+                qty_str = parts[1].strip()
+                if name and qty_str:
+                    result.append({
+                        "name": name,
+                        "qty": qty_str,
+                        "link": create_blinkit_link(name)
+                    })
+        return result if result else None
+    except Exception as e:
+        st.error(f"AI Error: {e}")
         return None
 
 def get_scaled_ingredients(item, qty):
-    """Known recipes ki manual scaling"""
-    base_items = INGREDIENTS_MAP.get(item.lower(), {})
+    item_clean = item.lower().replace(" ", "").replace("noodels", "noodles")
+    base_items = INGREDIENTS_MAP.get(item_clean, {})
     scaled_data = []
 
     for ing, data in base_items.items():
@@ -158,12 +155,11 @@ def get_scaled_ingredients(item, qty):
 
 # ===== UI =====
 st.title("🛒 Smart Cart Agent")
-st.subheader("Google-Powered Recipe Ingredients + Blinkit Links")
+st.subheader("AI-Powered Recipe Ingredients + Blinkit Links")
 
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    # Dropdown + Custom text input
     option = st.selectbox(
         "Select Meal or Type Custom",
         options=list(MIN_PRICE_PER_PERSON.keys()) + ["Custom..."],
@@ -176,7 +172,7 @@ with col1:
         item = option
 
 with col2:
-    qty = st.number_input("People", min_value=1, max_value=20, value=2)
+    qty = st.number_input("People", min_value=1, max_value=20, value=1)
 
 generate_btn = st.button("Generate Cart 🛍️", use_container_width=True, type="primary")
 
@@ -195,24 +191,24 @@ if generate_btn and item:
     st.divider()
     st.subheader("📝 Ingredients List")
 
-    # 1. Known recipe check
+    # 1. Known recipe check - typos handle chesam
     ingredients = get_scaled_ingredients(item, qty)
 
-    # 2. Unknown recipe - Google nundi fetch chey
+    # 2. Unknown recipe - AI tho direct generate
     if not ingredients:
-        with st.spinner(f"Searching Google for {item} ingredients..."):
-            ingredients = fetch_ingredients_from_google(item, qty)
+        with st.spinner(f"Generating ingredients for {item}..."):
+            ingredients = fetch_ingredients_ai(item, qty)
 
-    # 3. Fallback
+    # 3. Final fallback
     if not ingredients:
-        st.warning("Could not fetch ingredients. Using generic list.")
+        st.warning("Could not generate ingredients. Using generic list.")
         ingredients = [
-            {"name": "Main Ingredient", "qty": f"{qty*200}g", "link": create_blinkit_link(item)},
+            {"name": item.title(), "qty": f"{qty*200}g", "link": create_blinkit_link(item)},
             {"name": "Oil", "qty": f"{qty*50}ml", "link": create_blinkit_link("Oil")},
             {"name": "Spices Mix", "qty": "1 packet", "link": create_blinkit_link("Spices")}
         ]
 
-    # Display all ingredients with individual links
+    # Display all ingredients
     for ing in ingredients:
         col1, col2, col3 = st.columns([3, 2, 2])
         with col1:
@@ -224,7 +220,6 @@ if generate_btn and item:
 
     st.divider()
 
-    # Master cart link
     all_items = [ing['name'] for ing in ingredients]
     master_link = create_blinkit_link(",".join(all_items))
 
@@ -236,6 +231,5 @@ if generate_btn and item:
         type="primary"
     )
 
-# Footer
 st.divider()
-st.caption("Known recipes: Biryani ₹150 | Burger ₹99 | Pizza ₹199 | Thali ₹100 | Others: ₹100/person | Powered by Google")
+st.caption("Known: Biryani ₹150 | Burger ₹99 | Pizza ₹199 | Noodles ₹80 | Others: ₹100/person")
