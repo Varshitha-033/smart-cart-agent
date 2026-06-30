@@ -1,7 +1,7 @@
 """
 Smart Cart Agent - Concierge Agents Track
 Kaggle AI Agents Intensive Vibe Coding Capstone
-Agent Skills: Reasoning + Tool Use + Computation + Security
+Agent Skills: Reasoning + Tool Use + Computation + Security + API Integration
 """
 
 import requests
@@ -33,7 +33,7 @@ class CartAgent:
     def generate_shopping_list(self, dish: str, people: int) -> dict:
         """
         AGENT SKILL: Multi-step Reasoning + Tool Use + Computation
-        FIX: Always get base for 1 person, then scale by people count
+        Pipeline: Dish → 1 Person Base → Scale → Total
         """
         dish = self._sanitize_input(dish)
         people = max(1, min(people, 20))
@@ -41,7 +41,7 @@ class CartAgent:
         # Step 1: Always get ingredients for 1 PERSON only
         base_ingredients = self._reason_ingredients(dish, 1)
 
-        # Step 2: Get prices for 1 person base
+        # Step 2: Get prices for 1 person base + Blinkit links
         base_priced_items = self._use_search_tool(base_ingredients)
 
         # Step 3: Scale quantities and prices by people count
@@ -69,6 +69,7 @@ CRITICAL RULES:
 2. Format: "ingredient - quantity unit" per line only
 3. No explanations, just the list
 4. Think hostel-style single serving
+5. Include ALL ingredients - spices, oil, salt everything
 
 Example for "palak paneer for 1":
 palak - 100g
@@ -98,7 +99,10 @@ Now list ingredients for "{dish}" for 1 person:"""
             return [f"Error: {str(e)}"]
 
     def _use_search_tool(self, ingredients: list) -> list:
-        """AGENT SKILL: Tool Use - Get base prices for 1 person"""
+        """
+        AGENT SKILL: Tool Use + API Integration
+        Get base prices for 1 person + Generate Blinkit deep links
+        """
         priced_items = []
         for item_line in ingredients:
             try:
@@ -113,18 +117,24 @@ Now list ingredients for "{dish}" for 1 person:"""
                 else:
                     price_data = {"price": self._estimate_price(ingredient), "source": "Estimated"}
 
+                # Generate Blinkit search link for direct purchase
+                blinkit_link = f"https://blinkit.com/s/?q={ingredient.replace(' ', '%20')}"
+
                 priced_items.append({
                     "item": ingredient,
                     "quantity": quantity,
-                    "base_price_inr": price_data["price"], # Base price for 1 person
-                    "source": price_data["source"]
+                    "base_price_inr": price_data["price"],
+                    "source": price_data["source"],
+                    "blinkit_link": blinkit_link
                 })
             except:
+                blinkit_link = f"https://blinkit.com/s/?q={ingredient.replace(' ', '%20')}"
                 priced_items.append({
                     "item": ingredient,
                     "quantity": quantity,
                     "base_price_inr": 10,
-                    "source": "Estimated"
+                    "source": "Estimated",
+                    "blinkit_link": blinkit_link
                 })
         return priced_items
 
@@ -135,7 +145,8 @@ Now list ingredients for "{dish}" for 1 person:"""
         """
         if people == 1:
             return [{"item": i["item"], "quantity": i["quantity"],
-                    "price_inr": i["base_price_inr"], "source": i["source"]}
+                    "price_inr": i["base_price_inr"], "source": i["source"],
+                    "blinkit_link": i["blinkit_link"]}
                    for i in base_items]
 
         scaled = []
@@ -147,7 +158,8 @@ Now list ingredients for "{dish}" for 1 person:"""
                 "item": item["item"],
                 "quantity": scaled_qty,
                 "price_inr": scaled_price,
-                "source": item["source"]
+                "source": item["source"],
+                "blinkit_link": item["blinkit_link"]
             })
         return scaled
 
@@ -160,19 +172,29 @@ Now list ingredients for "{dish}" for 1 person:"""
                 num = float(match.group(1))
                 unit = match.group(2)
                 scaled_num = num * multiplier
-                # Integer chey if whole number
                 if scaled_num == int(scaled_num):
                     return f"{int(scaled_num)}{unit}"
                 return f"{scaled_num:.1f}{unit}"
 
-            # Case 2: "1 small", "2 medium"
-            match = re.match(r'^(\d+)\s+(small|medium|large|tsp|tbsp|pinch)$', qty_str.strip(), re.IGNORECASE)
+            # Case 2: "1 small", "2 medium", "1/2 tsp"
+            match = re.match(r'^(\d+)\s+(small|medium|large|tsp|tbsp|pinch|inch|cloves?)$', qty_str.strip(), re.IGNORECASE)
             if match:
                 num = int(match.group(1))
                 unit = match.group(2)
                 return f"{num * multiplier} {unit}"
 
-            # Case 3: "to taste", "pinch" - don't scale
+            # Case 3: "1/2 tsp", "1/4 tsp"
+            match = re.match(r'^(\d+)/(\d+)\s+(tsp|tbsp)$', qty_str.strip())
+            if match:
+                num = int(match.group(1))
+                denom = int(match.group(2))
+                unit = match.group(3)
+                scaled_num = (num * multiplier) / denom
+                if scaled_num == int(scaled_num):
+                    return f"{int(scaled_num)} {unit}"
+                return f"{scaled_num:.2f} {unit}"
+
+            # Case 4: "to taste", "pinch", "as needed" - don't scale
             if qty_str.lower() in ['to taste', 'pinch', 'as needed']:
                 return qty_str
 
@@ -210,12 +232,13 @@ Now list ingredients for "{dish}" for 1 person:"""
         Base prices for 1 person single serving - Blinkit 2026 rates
         """
         price_map = {
-            "onion": 8, "tomato": 10, "potato": 6, "palak": 10,
+            "onion": 8, "tomato": 10, "potato": 6, "palak": 10, "sembar": 15,
             "coriander": 5, "green chili": 3, "ginger": 5, "garlic": 5, "lemon": 3,
+            "curry leaves": 10, "mustard seeds": 10, "cumin seeds": 8, "asafoetida": 10,
             "paneer": 35, "milk": 28, "curd": 15, "butter": 15, "cream": 12, "cheese": 25,
             "chicken": 65, "mutton": 180, "egg": 6, "fish": 80,
-            "oil": 25, "rice": 15, "atta": 12, "sugar": 10, "salt": 5, "dal": 20, "tur dal": 25,
-            "turmeric": 5, "cumin": 8, "garam masala": 10, "chili powder": 5,
+            "oil": 25, "rice": 15, "atta": 12, "sugar": 10, "salt": 5, "dal": 20, "tur dal": 25, "toor dal": 20,
+            "turmeric": 5, "cumin": 8, "garam masala": 10, "chili powder": 5, "red chili powder": 5,
             "coriander powder": 5, "ginger-garlic paste": 8,
             "ghee": 50, "bread": 25, "bun": 15, "patty": 40
         }
@@ -233,10 +256,11 @@ Now list ingredients for "{dish}" for 1 person:"""
             "items": items,
             "total_inr": total,
             "people": people,
-            "agent_version": "CartAgent v1.1"
+            "agent_version": "CartAgent v1.2"
         }
 
     def is_greeting(self, text: str) -> bool:
+        """SECURITY: Greeting detection to avoid injection"""
         greetings = ['hi', 'hello', 'hey', 'namaste', 'hii']
         text_lower = text.lower().strip()
         return any(text_lower == g or text_lower.startswith(g + ' ') for g in greetings)
