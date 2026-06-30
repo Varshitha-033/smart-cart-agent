@@ -1,6 +1,6 @@
 import streamlit as st
 from groq import Groq
-import re
+import urllib.parse
 
 st.set_page_config(page_title="Smart Cart Agent", page_icon="🛒", layout="wide")
 
@@ -11,10 +11,49 @@ MIN_PRICE_PER_PERSON = {
     "pizza": 199,
     "meal": 120,
     "thali": 100,
-    "sandwich": 80,
-    "dosa": 60,
-    "idli": 40,
-    "roll": 90
+    "sandwich": 80
+}
+
+# ===== INGREDIENTS DATABASE =====
+INGREDIENTS_MAP = {
+    "biryani": [
+        "Basmati Rice 1kg",
+        "Chicken 500g",
+        "Biryani Masala",
+        "Onions 500g",
+        "Curd 500ml",
+        "Ghee 200ml",
+        "Mint Leaves",
+        "Coriander Leaves"
+    ],
+    "burger": [
+        "Burger Buns 4pc",
+        "Chicken Patty 4pc",
+        "Cheese Slices",
+        "Lettuce",
+        "Tomato 500g",
+        "Mayonnaise",
+        "Ketchup"
+    ],
+    "pizza": [
+        "Pizza Base 2pc",
+        "Pizza Sauce",
+        "Mozzarella Cheese 200g",
+        "Capsicum 250g",
+        "Onion 500g",
+        "Sweet Corn 200g",
+        "Oregano",
+        "Chilli Flakes"
+    ],
+    "thali": [
+        "Rice 1kg",
+        "Toor Dal 500g",
+        "Vegetables Mix 1kg",
+        "Curd 500ml",
+        "Chapati Flour 1kg",
+        "Pickle",
+        "Papad"
+    ]
 }
 
 def calculate_price(item, qty):
@@ -26,131 +65,146 @@ def calculate_price(item, qty):
             break
     return base_price * int(qty)
 
-# ===== GROQ FOR MEAL SUGGESTIONS =====
-def get_meal_suggestion(item, qty, budget=None):
+def create_blinkit_cart_link(ingredients_list):
+    """Multiple items tho Blinkit search link create chestadi"""
+    # Blinkit multi-search format: https://blinkit.com/s/?q=item1,item2,item3
+    query = ",".join(ingredients_list)
+    encoded_query = urllib.parse.quote(query)
+    return f"https://blinkit.com/s/?q={encoded_query}"
+
+# ===== GROQ FOR QUANTITIES =====
+def get_ingredients_with_qty(item, qty):
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-    prompt = f"""You are Smart Cart Agent.
+    base_ingredients = INGREDIENTS_MAP.get(item.lower(), ["Rice 1kg", "Dal 500g", "Oil 1L"])
 
-User wants: {qty} person {item}
-Base price: ₹{MIN_PRICE_PER_PERSON.get(item.lower(), 100)} per person
-Total: ₹{calculate_price(item, qty)}
+    prompt = f"""For {qty} person {item}, give quantity for each ingredient.
+Base ingredients: {base_ingredients}
+Total budget: ₹{calculate_price(item, qty)}
 
-Give:
-1. Breakdown of items needed from Blinkit
-2. Estimated quantities
-3. Total cost must be minimum ₹{calculate_price(item, qty)}
-4. Keep it under 4 lines
+Return ONLY in this format, one per line:
+Item Name - Quantity
 
-Indian context. No extra text."""
+Example:
+Basmati Rice - 500g
+Chicken - 250g
+
+No extra text. Indian portions."""
 
     response = client.chat.completions.create(
         model="llama-3.1-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.4,
-        max_tokens=300
+        temperature=0.2,
+        max_tokens=400
     )
     return response.choices[0].message.content
 
-# ===== NEW UI - FORM BASED =====
+# ===== UI =====
 st.title("🛒 Smart Cart Agent")
-st.subheader("Instant Grocery Price Calculator for Indian Meals")
+st.subheader("Ingredients List + Blinkit Cart Link Generator")
 
-# Input Section
 col1, col2, col3 = st.columns([2, 1, 1])
 
 with col1:
     item = st.selectbox(
-        "Select Item",
+        "Select Meal",
         options=list(MIN_PRICE_PER_PERSON.keys()),
-        index=0,
         format_func=lambda x: x.title()
     )
 
 with col2:
-    qty = st.number_input("People", min_value=1, max_value=20, value=1, step=1)
+    qty = st.number_input("People", min_value=1, max_value=20, value=1)
 
 with col3:
-    st.write("") # spacing
     st.write("")
-    calc_btn = st.button("Get Price 💰", use_container_width=True, type="primary")
+    generate_btn = st.button("Generate Cart 🛍️", use_container_width=True, type="primary")
 
-# Result Section
-if calc_btn:
+if generate_btn:
     total = calculate_price(item, qty)
 
     st.divider()
 
-    # Big Price Display
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(label="Item", value=item.title())
-    with col2:
-        st.metric(label="Quantity", value=f"{qty} Person")
-    with col3:
-        st.metric(label="Total Price", value=f"₹{total}", delta=f"₹{total//qty}/person")
+    # Price Display
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Meal", item.title())
+    with c2:
+        st.metric("People", qty)
+    with c3:
+        st.metric("Min Total", f"₹{total}")
 
     st.divider()
 
-    # AI Meal Plan
-    with st.spinner("Creating meal plan..."):
+    # Ingredients List
+    st.subheader("📝 Ingredients List")
+
+    with st.spinner("Calculating ingredients..."):
         try:
-            suggestion = get_meal_suggestion(item, qty)
-            st.success("**Meal Plan:**")
-            st.write(suggestion)
+            ingredients_text = get_ingredients_with_qty(item, qty)
+            st.code(ingredients_text, language=None)
+
+            # Extract item names for Blinkit link
+            ingredients_for_link = []
+            for line in ingredients_text.split('\n'):
+                if '-' in line:
+                    item_name = line.split('-')[0].strip()
+                    ingredients_for_link.append(item_name)
+
+            # Blinkit Cart Link
+            if ingredients_for_link:
+                cart_link = create_blinkit_cart_link(ingredients_for_link[:6]) # First 6 items
+
+                st.success("✅ Cart Ready!")
+                st.link_button(
+                    "🛍️ Add All to Blinkit Cart",
+                    cart_link,
+                    use_container_width=True,
+                    type="primary"
+                )
+
+                st.caption(f"Link includes: {', '.join(ingredients_for_link[:6])}")
+
         except Exception as e:
-            st.warning(f"AI suggestion failed. Base price: ₹{total}")
-            st.code(f"{item.title()} x {qty} = ₹{total}")
+            st.error(f"AI failed. Using default list.")
+            default_items = INGREDIENTS_MAP.get(item.lower(), ["Rice", "Dal"])
+            for ing in default_items:
+                st.write(f"- {ing}")
 
-    # Blinkit Link
-    st.link_button(
-        "🛍️ Open Blinkit & Order",
-        f"https://blinkit.com/s/?q={item}",
-        use_container_width=True
-    )
+            cart_link = create_blinkit_cart_link(default_items)
+            st.link_button("🛍️ Open Blinkit", cart_link, use_container_width=True)
 
-# ===== SIDEBAR - PRICE TABLE =====
+# ===== SIDEBAR =====
 with st.sidebar:
-    st.header("📋 Price Chart")
-    st.caption("Minimum rates per person")
-
-    # Table format
-    data = []
+    st.header("💰 Base Prices")
     for food, price in MIN_PRICE_PER_PERSON.items():
-        data.append({"Item": food.title(), "Min Price": f"₹{price}"})
-
-    st.dataframe(data, use_container_width=True, hide_index=True)
+        st.markdown(f"**{food.title()}**: ₹{price}/person")
 
     st.divider()
-    st.info("**Rules:**\n- Biryani: ₹150+\n- Burger: ₹99+\n- Pizza: ₹199+\n- All prices per person")
+    st.info("**How it works:**\n1. Select meal + people\n2. Get ingredients list\n3. Click Blinkit link\n4. All items pre-filled in search")
 
     st.divider()
     st.caption("Kaggle AI Agents Capstone 2026")
 
-# ===== FOOTER CARDS =====
+# ===== FOOTER =====
 st.divider()
-st.subheader("Popular Combos")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    if st.button("2 Biryani", use_container_width=True):
-        st.session_state.combo = ("biryani", 2)
-        st.rerun()
-with c2:
-    if st.button("1 Burger", use_container_width=True):
-        st.session_state.combo = ("burger", 1)
-        st.rerun()
-with c3:
-    if st.button("3 Pizza", use_container_width=True):
-        st.session_state.combo = ("pizza", 3)
-        st.rerun()
-with c4:
-    if st.button("4 Thali", use_container_width=True):
-        st.session_state.combo = ("thali", 4)
-        st.rerun()
+st.subheader("Quick Start")
+q1, q2, q3, q4 = st.columns(4)
 
-# Handle combo clicks
-if "combo" in st.session_state:
-    item, qty = st.session_state.combo
+quick_items = [
+    ("2 Biryani", "biryani", 2),
+    ("1 Burger", "burger", 1),
+    ("3 Pizza", "pizza", 3),
+    ("4 Thali", "thali", 4)
+]
+
+for col, (label, itm, q) in zip([q1, q2, q3, q4], quick_items):
+    with col:
+        if st.button(label, use_container_width=True):
+            st.session_state.quick = (itm, q)
+            st.rerun()
+
+if "quick" in st.session_state:
+    item, qty = st.session_state.quick
     total = calculate_price(item, qty)
-    st.success(f"**{item.title()} x {qty} = ₹{total}**")
-    del st.session_state.combo
+    st.success(f"**{item.title()} x {qty} = ₹{total}** - Click Generate Cart above")
+    del st.session_state.quick
